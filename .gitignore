@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.ipynb_checkpoints/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+
+# Data and results are NOT part of this repo (code only) -- see README.
+# These are the input the scripts expect, and the folders each script writes
+# its own output into, so a local run stays untracked.
+flights/
+*.csv
+*.json
+*.png
+*.pdf
+
+# per-study output folders (each script writes only into its own)
+MISSION12*/
+WITH_MASS/
+WITHOUT_MASS/
+NO_MOTORS/
+DATASIZE/
+HOLDOUT/
+MODEL_COMPARISON*/
+Ensemble*/
+RIDGE_MISSION12*/
+NESTED_CV/
+ML/
