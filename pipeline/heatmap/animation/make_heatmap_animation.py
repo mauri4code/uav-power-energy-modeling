@@ -67,7 +67,9 @@ from matplotlib.colors import PowerNorm
 # PATHS
 # =====================================================
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-FLIGHTS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "flights"))
+# this copy lives one level deeper than the original (HEAT_MAP/with_power_plot/),
+# so the flights data is two levels up instead of one
+FLIGHTS_DIR = os.path.normpath(os.path.join(SCRIPT_DIR, "..", "..", "flights"))
 IMAGE_PATH = os.path.join(SCRIPT_DIR, "Rotors_poss.jpeg")
 OUT_SINGLE = os.path.join(SCRIPT_DIR, "motor_animation.html")
 OUT_GRID = os.path.join(SCRIPT_DIR, "motor_animation_grid.html")
@@ -403,6 +405,13 @@ canvas#stage { display: block; max-width: 100%; }
 .colorbar-wrap { margin-top: 14px; }
 .colorbar { height: 14px; border-radius: 4px; border: 1px solid #3a4048; }
 .colorbar-ticks { display: flex; justify-content: space-between; font-size: 0.72rem; color: #9aa2ad; margin-top: 3px; }
+.chart-wrap {
+  margin-top: 18px; background: #1e2126; border: 1px solid #2c3038;
+  border-radius: 10px; padding: 14px 18px;
+}
+.chart-wrap canvas { width: 100%; height: 260px; display: block; border-radius: 6px; }
+.chart-legend { display: flex; flex-wrap: wrap; gap: 4px 16px; margin-top: 8px; font-size: 0.72rem; color: #cfd4da; }
+.chart-legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: middle; }
 </style>
 </head>
 <body>
@@ -447,6 +456,12 @@ canvas#stage { display: block; max-width: 100%; }
   </div>
 </div>
 
+<div class="chart-wrap">
+  <div class="k">Power &amp; motor commands over time — how the motors react, then power follows</div>
+  <canvas id="chart" width="1200" height="260"></canvas>
+  <div class="chart-legend" id="chartLegend"></div>
+</div>
+
 <script>
 const IMAGE_B64 = "__IMAGE_B64__";
 const MOTOR_LAYOUT = __MOTOR_LAYOUT_JSON__;
@@ -457,9 +472,13 @@ const COLOR_LUT = __COLOR_LUT_JSON__;
 const COLOR_GAMMA = __COLOR_GAMMA__;
 const DECIMATION_HZ = __DECIMATION_HZ__;
 const TIME_SCALE = __TIME_SCALE__;
+const POWER_MAX = __POWER_MAX__;
 const FLIGHTS = __FLIGHTS_JSON__;
 const PHASE_NAMES = ["arming", "flight", "landing/shutdown"];
 const PHASE_CLASS = ["phase-arming", "phase-flight", "phase-landing"];
+const MOTOR_LINE_COLORS = { motor_1_front_right: "#ff6b6b", motor_2_rear_left: "#4dabf7", motor_3_front_left: "#51cf66", motor_4_rear_right: "#f7c948" };
+const MOTOR_SHORT = { motor_1_front_right: "M1", motor_2_rear_left: "M2", motor_3_front_left: "M3", motor_4_rear_right: "M4" };
+const PHASE_BAND_COLOR = ["#e0b400", "#4caf50", "#4aa3df"]; // arming, flight, landing
 
 // ---- image ----
 const img = new Image();
@@ -542,6 +561,131 @@ function drawColorbar() {
     ") to bring out red at more moderate values. Values outside the range are clipped in colour (numeric label still exact).";
 }
 
+// ---- power/motor-over-time chart ----
+// Static series (phase bands, gridlines, power + motor lines) are drawn
+// once per flight onto an offscreen canvas; each render just blits that
+// image back and draws a moving playhead line + value dots on top, so a
+// full redraw of ~thousands of points never happens per animation frame.
+const chart = document.getElementById("chart");
+const chartCtx = chart.getContext("2d");
+const chartBase = document.createElement("canvas");
+chartBase.width = chart.width;
+chartBase.height = chart.height;
+const chartBaseCtx = chartBase.getContext("2d");
+const CHART_MARGIN = { left: 50, right: 44, top: 14, bottom: 26 };
+
+function chartX(t, dur) {
+  const pw = chart.width - CHART_MARGIN.left - CHART_MARGIN.right;
+  return CHART_MARGIN.left + (dur > 0 ? (t / dur) * pw : 0);
+}
+function chartYPower(p) {
+  const ph = chart.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+  return chart.height - CHART_MARGIN.bottom - Math.max(0, Math.min(p / POWER_MAX, 1)) * ph;
+}
+function chartYMotor(m) {
+  const ph = chart.height - CHART_MARGIN.top - CHART_MARGIN.bottom;
+  return chart.height - CHART_MARGIN.bottom - Math.max(0, Math.min(m, 1)) * ph;
+}
+
+function buildChartBase(fl) {
+  const c = chartBaseCtx;
+  const W = chart.width, H = chart.height;
+  c.clearRect(0, 0, W, H);
+  const frames = fl.frames;
+  const dur = frames[frames.length - 1][0];
+
+  // Phase band boundaries, from the same phase field the labels use.
+  let t1 = dur, t2 = dur;
+  for (const f of frames) { if (f[2] >= 1) { t1 = f[0]; break; } }
+  for (const f of frames) { if (f[2] >= 2) { t2 = f[0]; break; } }
+  [[0, t1, PHASE_BAND_COLOR[0]], [t1, t2, PHASE_BAND_COLOR[1]], [t2, dur, PHASE_BAND_COLOR[2]]]
+    .forEach(([a, b, color]) => {
+      if (b <= a) return;
+      c.fillStyle = color; c.globalAlpha = 0.08;
+      c.fillRect(chartX(a, dur), CHART_MARGIN.top, chartX(b, dur) - chartX(a, dur),
+                 H - CHART_MARGIN.top - CHART_MARGIN.bottom);
+    });
+  c.globalAlpha = 1;
+
+  // Gridlines + axis labels: power (left, W) and motor command (right, 0-1).
+  c.font = "10px sans-serif";
+  c.strokeStyle = "#2c3038";
+  [0, 0.5, 1].forEach((f) => {
+    const y = chartYPower(f * POWER_MAX);
+    c.beginPath(); c.lineWidth = 1; c.moveTo(CHART_MARGIN.left, y); c.lineTo(W - CHART_MARGIN.right, y); c.stroke();
+    c.fillStyle = "#7c8590"; c.textAlign = "left"; c.textBaseline = "middle";
+    c.fillText((f * POWER_MAX).toFixed(0) + "W", 2, y);
+  });
+  [0, 0.5, 1].forEach((f) => {
+    const y = chartYMotor(f);
+    c.fillStyle = "#7c8590"; c.textAlign = "right"; c.textBaseline = "middle";
+    c.fillText(f.toFixed(1), W - 4, y);
+  });
+  [0, 0.25, 0.5, 0.75, 1].forEach((f) => {
+    const t = f * dur, x = chartX(t, dur);
+    c.beginPath(); c.strokeStyle = "#22262c"; c.moveTo(x, CHART_MARGIN.top); c.lineTo(x, H - CHART_MARGIN.bottom); c.stroke();
+    c.fillStyle = "#7c8590"; c.textAlign = "center"; c.textBaseline = "top";
+    c.fillText(t.toFixed(0) + "s", x, H - CHART_MARGIN.bottom + 4);
+  });
+
+  // Motor command lines (thin) then power (thicker, on top).
+  MOTOR_ORDER.forEach((col, mi) => {
+    c.beginPath();
+    c.strokeStyle = MOTOR_LINE_COLORS[col];
+    c.lineWidth = 1.3;
+    c.globalAlpha = 0.9;
+    frames.forEach((f, i) => {
+      const x = chartX(f[0], dur), y = chartYMotor(f[3 + mi]);
+      if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+    });
+    c.stroke();
+  });
+  c.globalAlpha = 1;
+  c.beginPath();
+  c.strokeStyle = "#ffa94d";
+  c.lineWidth = 2.4;
+  frames.forEach((f, i) => {
+    const x = chartX(f[0], dur), y = chartYPower(f[1]);
+    if (i === 0) c.moveTo(x, y); else c.lineTo(x, y);
+  });
+  c.stroke();
+}
+
+function drawChartOverlay(t, frame) {
+  chartCtx.clearRect(0, 0, chart.width, chart.height);
+  chartCtx.drawImage(chartBase, 0, 0);
+  const x = chartX(t, duration);
+
+  chartCtx.strokeStyle = "rgba(255,255,255,0.85)";
+  chartCtx.lineWidth = 1.5;
+  chartCtx.beginPath();
+  chartCtx.moveTo(x, CHART_MARGIN.top);
+  chartCtx.lineTo(x, chart.height - CHART_MARGIN.bottom);
+  chartCtx.stroke();
+
+  const [, power, , m1, m2, m3, m4] = frame;
+  const dot = (y, color) => {
+    chartCtx.fillStyle = color;
+    chartCtx.beginPath();
+    chartCtx.arc(x, y, 3.2, 0, Math.PI * 2);
+    chartCtx.fill();
+  };
+  dot(chartYPower(power), "#ffa94d");
+  dot(chartYMotor(m1), MOTOR_LINE_COLORS.motor_1_front_right);
+  dot(chartYMotor(m2), MOTOR_LINE_COLORS.motor_2_rear_left);
+  dot(chartYMotor(m3), MOTOR_LINE_COLORS.motor_3_front_left);
+  dot(chartYMotor(m4), MOTOR_LINE_COLORS.motor_4_rear_right);
+}
+
+function buildChartLegend() {
+  const el = document.getElementById("chartLegend");
+  const items = [["Power (W, left axis)", "#ffa94d"]];
+  MOTOR_ORDER.forEach((col) => items.push([MOTOR_SHORT[col] + " command (0-1, right axis)", MOTOR_LINE_COLORS[col]]));
+  items.push(["arming / flight / landing (background tint)", "#7c8590"]);
+  el.innerHTML = items.map(([label, color]) =>
+    '<span><i class="sw" style="background:' + color + '"></i>' + label + "</span>").join("");
+}
+
 // ---- state ----
 // flightTime is a continuous float (seconds into the current flight's
 // mission window). Rendering interpolates linearly between the two
@@ -565,6 +709,7 @@ function setFlight(fid) {
   document.getElementById("lblTraj").textContent = fl.meta.trajectory;
   document.getElementById("lblPayload").textContent =
     fl.meta.payload_mass.toFixed(2) + " kg — " + fl.meta.position_payload;
+  buildChartBase(fl);
   renderAtTime(0);
 }
 
@@ -596,7 +741,9 @@ function interpolatedFrame(t) {
 
 function renderAtTime(t) {
   flightTime = Math.max(0, Math.min(t, duration));
-  drawFrame(interpolatedFrame(flightTime));
+  const frame = interpolatedFrame(flightTime);
+  drawFrame(frame);
+  drawChartOverlay(flightTime, frame);
   const scrub = document.getElementById("scrub");
   scrub.value = duration > 0 ? Math.round((flightTime / duration) * 1000) : 0;
 }
@@ -645,6 +792,7 @@ function init() {
     "Data decimated to " + DECIMATION_HZ + " fps of flight time, smoothly interpolated for playback. " +
     "Played at " + (1 / TIME_SCALE).toFixed(2) + "x real flight time by default (Speed multiplies on top).";
   drawColorbar();
+  buildChartLegend();
   setFlight(Object.keys(FLIGHTS).sort()[0]);
 }
 
@@ -676,10 +824,12 @@ __SHARED_CSS__
   gap: 12px;
 }
 .panel { background: #1e2126; border: 1px solid #2c3038; border-radius: 10px; padding: 8px; }
-.panel canvas { width: 100%; height: auto; display: block; border-radius: 6px; }
+.panel canvas.rotor { width: 100%; height: auto; display: block; border-radius: 6px; }
+.panel canvas.spark { width: 100%; height: 42px; display: block; border-radius: 4px; margin-top: 6px; }
 .panel .title { font-size: 0.78rem; font-weight: 600; margin-bottom: 4px; }
 .panel .sub { font-size: 0.68rem; color: #9aa2ad; margin-bottom: 6px; }
 .panel .stat { font-size: 0.68rem; color: #cfd4da; display: flex; justify-content: space-between; margin-top: 4px; }
+.panel .sparklabel { font-size: 0.62rem; color: #7c8590; margin-top: 4px; }
 .colorbar-wrap { margin: 4px 0 14px; max-width: 420px; }
 .colorbar { height: 14px; border-radius: 4px; border: 1px solid #3a4048; width: 100%; }
 .colorbar-ticks { display: flex; justify-content: space-between; font-size: 0.72rem; color: #9aa2ad; margin-top: 3px; }
@@ -724,6 +874,7 @@ const COLOR_SCALE = __COLOR_SCALE_JSON__;
 const COLOR_LUT = __COLOR_LUT_JSON__;
 const COLOR_GAMMA = __COLOR_GAMMA__;
 const TIME_SCALE = __TIME_SCALE__;
+const POWER_MAX = __POWER_MAX__;
 const FLIGHTS = __FLIGHTS_JSON__;
 const N_STEPS = __N_STEPS__;
 const PHASE_NAMES = ["arming", "flight", "landing/shutdown"];
@@ -744,6 +895,9 @@ function lutColor(value) {
 
 const flightIds = Object.keys(FLIGHTS).sort();
 const canvases = {};
+const sparkCanvases = {};
+const sparkBases = {};   // offscreen canvas per flight: static power line drawn once
+const SPARK_W = 300, SPARK_H = 44, SPARK_MARGIN = { left: 2, right: 2, top: 4, bottom: 4 };
 
 function buildGrid() {
   const grid = document.getElementById("grid");
@@ -754,11 +908,54 @@ function buildGrid() {
     panel.innerHTML =
       '<div class="title">' + fid + ' — ' + fl.meta.trajectory + '</div>' +
       '<div class="sub">' + fl.meta.payload_mass.toFixed(2) + ' kg — ' + fl.meta.position_payload + '</div>' +
-      '<canvas width="843" height="855"></canvas>' +
-      '<div class="stat"><span class="phase">-</span><span class="power">-</span></div>';
+      '<canvas class="rotor" width="843" height="855"></canvas>' +
+      '<div class="stat"><span class="phase">-</span><span class="power">-</span></div>' +
+      '<canvas class="spark" width="' + SPARK_W + '" height="' + SPARK_H + '"></canvas>' +
+      '<div class="sparklabel">Power over time (0-' + POWER_MAX.toFixed(0) + ' W, fixed scale)</div>';
     grid.appendChild(panel);
-    canvases[fid] = panel.querySelector("canvas");
+    canvases[fid] = panel.querySelector("canvas.rotor");
+    sparkCanvases[fid] = panel.querySelector("canvas.spark");
+    sparkBases[fid] = buildSparkBase(fl);
   });
+}
+
+// Static power-vs-time line for one flight, drawn once onto an offscreen
+// canvas so the per-frame render is just a cheap image blit + playhead line.
+function buildSparkBase(fl) {
+  const off = document.createElement("canvas");
+  off.width = SPARK_W; off.height = SPARK_H;
+  const c = off.getContext("2d");
+  const frames = fl.frames;
+  const dur = frames[frames.length - 1][0];
+  const pw = SPARK_W - SPARK_MARGIN.left - SPARK_MARGIN.right;
+  const ph = SPARK_H - SPARK_MARGIN.top - SPARK_MARGIN.bottom;
+  const x = (t) => SPARK_MARGIN.left + (dur > 0 ? (t / dur) * pw : 0);
+  const y = (p) => SPARK_H - SPARK_MARGIN.bottom - Math.max(0, Math.min(p / POWER_MAX, 1)) * ph;
+
+  c.strokeStyle = "#ffa94d";
+  c.lineWidth = 1.6;
+  c.beginPath();
+  frames.forEach((f, i) => {
+    const px = x(f[0]), py = y(f[1]);
+    if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
+  });
+  c.stroke();
+  return off;
+}
+
+function drawSparkOverlay(fid, clock) {
+  const canvas = sparkCanvases[fid];
+  const ctx = canvas.getContext("2d");
+  ctx.clearRect(0, 0, SPARK_W, SPARK_H);
+  ctx.drawImage(sparkBases[fid], 0, 0);
+  const pw = SPARK_W - SPARK_MARGIN.left - SPARK_MARGIN.right;
+  const x = SPARK_MARGIN.left + clock * pw;
+  ctx.strokeStyle = "rgba(255,255,255,0.8)";
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(x, SPARK_MARGIN.top);
+  ctx.lineTo(x, SPARK_H - SPARK_MARGIN.bottom);
+  ctx.stroke();
 }
 
 // Smoothstep-eased interpolation: zero velocity at each sample instead of a
@@ -855,7 +1052,7 @@ const BASE_FPS = __GRID_FPS__;
 const CLOCK_RATE = BASE_FPS / (N_STEPS - 1);
 
 function renderAll() {
-  flightIds.forEach((fid) => drawPanel(fid, clock));
+  flightIds.forEach((fid) => { drawPanel(fid, clock); drawSparkOverlay(fid, clock); });
   document.getElementById("scrub").value = Math.round(clock * 1000);
   document.getElementById("pctLabel").textContent = (100 * clock).toFixed(0) + "%";
 }
@@ -945,6 +1142,11 @@ def main():
     print(f"Global colour scale (1st-99th pct of in-flight commands): {vmin:.3f} - {vmax:.3f}")
     color_lut = build_color_lut()
 
+    # Fixed global power axis (like the colour scale) so the power-over-time
+    # chart is comparable flight to flight instead of auto-scaling per panel.
+    power_max = float(max(fl["power"].max() for fl in flights)) * 1.05
+    print(f"Global power axis max: {power_max:.0f} W")
+
     with open(IMAGE_PATH, "rb") as f:
         image_b64 = "data:image/jpeg;base64," + base64.b64encode(f.read()).decode("ascii")
 
@@ -975,6 +1177,7 @@ def main():
         "__COLOR_GAMMA__": json.dumps(COLOR_GAMMA),
         "__TIME_SCALE__": json.dumps(PLAYBACK_TIME_SCALE),
         "__DECIMATION_HZ__": json.dumps(SINGLE_DECIMATION_HZ),
+        "__POWER_MAX__": json.dumps(power_max),
         "__FLIGHTS_JSON__": json.dumps(single_flights),
         "__AVERAGE_HEATMAP_B64__": average_heatmap_b64,
     })
@@ -1001,6 +1204,7 @@ def main():
         "__COLOR_LUT_JSON__": color_lut_json,
         "__COLOR_GAMMA__": json.dumps(COLOR_GAMMA),
         "__TIME_SCALE__": json.dumps(PLAYBACK_TIME_SCALE),
+        "__POWER_MAX__": json.dumps(power_max),
         "__FLIGHTS_JSON__": json.dumps(grid_flights),
         "__N_STEPS__": str(GRID_NORM_STEPS),
         "__GRID_FPS__": str(grid_fps),

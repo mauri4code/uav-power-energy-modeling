@@ -1,9 +1,32 @@
-# Animated motor heatmap
+# Animated motor heatmap — with power/motor-over-time chart (variant)
+
+This is a working copy of `../` (`HEAT_MAP/`), kept separate so it can be
+iterated on without touching the original deliverables. It reads flight
+data from `../../flights/F01..F14/` (one level deeper than the original,
+since this folder itself is nested inside `HEAT_MAP/`).
+
+**What's different from `../make_heatmap_animation.py`:** both HTML files
+now also show a **power & motor-command-over-time line chart**, synced to
+the same playhead as the rotor animation, so you can see the motors react
+first and power follow a beat later:
+
+- `motor_animation.html` — a full chart (power + all 4 motor commands, with
+  arming/flight/landing background bands) underneath the rotor diagram,
+  with a vertical playhead line + value dots that track the scrubber/
+  playback exactly like the circles do.
+- `motor_animation_grid.html` — a compact power-only sparkline under each
+  of the 14 panels, all on the same fixed 0-`POWER_MAX` W axis so panels
+  are visually comparable, each with its own playhead line on the shared
+  clock.
+
+Everything else (mission window, colour scale, gamma warp, smoothstep
+interpolation, average-heatmap section) is unchanged from the original —
+see the sections below, which still apply.
 
 Two self-contained HTML animations of the four PX4 rotor commands
 (`motor_1_front_right`, `motor_2_rear_left`, `motor_3_front_left`,
 `motor_4_rear_right`) overlaid on the airframe photo `Rotors_poss.jpeg`,
-built from `../flights/F01..F14/flight_resampled.csv`.
+built from `../../flights/F01..F14/flight_resampled.csv`.
 
 ```
 make_heatmap_animation.py     generator (reads the CSVs, writes the HTML)
@@ -16,7 +39,7 @@ Rotors_poss.jpeg              airframe photo, 843 x 855 px
 
 ```bash
 conda activate 00_EXPORT_TOPICS   # needs pandas, numpy, matplotlib, Pillow
-cd HEAT_MAP
+cd HEAT_MAP/with_power_plot
 python make_heatmap_animation.py
 ```
 
@@ -122,7 +145,7 @@ that mission actually took.
 
 ## Rotor layout
 
-`../09_motor_heatmap.py`'s original positions were a rough eyeball estimate
+`../../09_motor_heatmap.py`'s original positions were a rough eyeball estimate
 and sit visibly off-centre from the drawn rotor rings once overlaid at full
 resolution. They were re-measured here with a small Hough-circle search
 (scan candidate `(cx, cy, r)` and keep the one whose perimeter has maximum
@@ -139,7 +162,7 @@ MOTOR_LAYOUT = {
 CIRCLE_RADIUS_FRAC = 0.114
 ```
 
-`../09_motor_heatmap.py` still uses the old constants and will inherit the
+`../../09_motor_heatmap.py` still uses the old constants and will inherit the
 same drift if it's regenerated — not changed here since it wasn't part of
 this task.
 
