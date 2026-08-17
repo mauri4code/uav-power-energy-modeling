@@ -65,9 +65,8 @@ driving power" narrative in the thesis.
   regularisation strength; it never touches the held-out flight, so it does not
   affect the reported score.
 - **Evaluation:** leave-one-flight-out (14 folds). Features are z-scored using
-  train-fold mean/std only, applied to both train and the held-out flight — same
-  data-leakage discipline as everywhere else in the project (see
-  `04 CODES/02 ML MODELS/CLAUDE.md`).
+  train-fold mean/std only, applied to both train and the held-out flight — the
+  same data-leakage discipline used everywhere else in the project.
 - **Feature search:** EXHAUSTIVE over every non-empty subset of feature groups,
   not greedy forward selection. Ridge is cheap enough to afford it (255 subsets
   with mass, 127 without, ~5,350 fold-fits total, ~45 s on a laptop) — unlike the

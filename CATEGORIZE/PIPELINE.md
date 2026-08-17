@@ -29,8 +29,8 @@ the honesty caveat in §8).
 ### 2.1 Upstream (not part of this study)
 
 The classifier consumes `flights/F*/flight_resampled.csv`, the final output of
-the preprocessing pipeline documented in
-`04 CODES/02 ML MODELS/00 EXPORT_TOPICS/CONTEXT.md`. In brief, per flight:
+the preprocessing pipeline in the repository's `pipeline/` folder. In brief, per
+flight:
 
 1. `01_export_bag.py` — ROS `.bag` → per-topic CSVs (velocity, IMU, orientation,
    altitude, battery).
