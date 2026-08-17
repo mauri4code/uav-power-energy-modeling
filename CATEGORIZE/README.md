@@ -112,21 +112,6 @@ valuable next step — the same conclusion the power studies reach.
 
 ---
 
-## What to report
-
-> Payload position is fully recoverable from the four motor commands: a
-> multinomial logistic regression classifies all 14 held-out flights correctly
-> (leave-one-flight-out, per-flight majority vote), against a 29% majority-class
-> baseline. This reflects that the motor commands encode the load distribution —
-> the same information as the excluded imbalance features. Removing every
-> motor-derived signal, airframe orientation alone still recovers position at
-> 64%, evidence that an off-centre payload leaves a detectable roll/pitch bias,
-> though too weak at this data scale to classify reliably on its own. Payload
-> mass carries no position information (results are identical with and without
-> it), as expected from the experimental design.
-
----
-
 ## Files
 
 Per variant, in `WITH_MASS/` (tag `withmass`) and `WITHOUT_MASS/` (tag `nomass`):
